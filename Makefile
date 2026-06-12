@@ -1,14 +1,26 @@
-# for debug add -g -O0 to line below
-CFLAGS+=-pthread -O2 -Wall -Wextra -Wpedantic -Wstrict-overflow -fno-strict-aliasing -std=gnu11 -g -O0
+# fiche-agentic — Go build. (Upstream's C Makefile lives in legacy/.)
+BIN=fiche-agentic
 prefix=/usr/local/bin
 
-all:
-	${CC} main.c fiche.c $(CFLAGS) -o fiche
+all: build
 
-install: fiche
-	install -m 0755 fiche $(prefix)
+build:
+	go build -o $(BIN) ./cmd/fiche-agentic
+
+run: build
+	./$(BIN)
+
+test:
+	go test ./...
+
+vet:
+	go vet ./...
+	gofmt -l .
+
+install: build
+	install -m 0755 $(BIN) $(prefix)
 
 clean:
-	rm -f fiche
+	rm -f $(BIN)
 
-.PHONY: clean
+.PHONY: all build run test vet install clean
