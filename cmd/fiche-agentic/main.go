@@ -25,6 +25,22 @@ import (
 func main() {
 	cfg := config.Default()
 
+	// Environment-based defaults so the same binary works on Railway/containers
+	// with no flags. Explicit flags still override these.
+	if p := os.Getenv("PORT"); p != "" {
+		cfg.HTTPAddr = ":" + p // Railway injects PORT for the HTTP service
+	}
+	if a := os.Getenv("SSH_ADDR"); a != "" {
+		cfg.SSHAddr = a
+	}
+	if d := os.Getenv("RAILWAY_PUBLIC_DOMAIN"); d != "" {
+		cfg.Domain = d // public web domain -> correct paste URLs
+		cfg.HTTPS = true
+	}
+	if d := os.Getenv("FICHE_DOMAIN"); d != "" {
+		cfg.Domain = d
+	}
+
 	// Upstream-fiche flags (kept for familiarity)...
 	flag.StringVar(&cfg.Domain, "d", cfg.Domain, "domain prefixed to paste URLs")
 	flag.StringVar(&cfg.OutputDir, "o", cfg.OutputDir, "output directory for pastes")

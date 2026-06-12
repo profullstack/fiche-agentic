@@ -97,6 +97,30 @@ output directory directly if you prefer.
 
 -------------------------------------------------------------------------------
 
+## Deploying on Railway
+
+The app reads `PORT` (HTTP) and `RAILWAY_PUBLIC_DOMAIN` (paste URLs) from the
+environment, so a Dockerfile deploy works with almost no config.
+
+1. **New service → Deploy from this repo.** Railway uses the `Dockerfile`.
+2. **Add a Volume mounted at `/data`.** Required — it holds the pastes *and the
+   SSH host key*. Without it, every redeploy regenerates the host key and
+   returning users get `REMOTE HOST IDENTIFICATION HAS CHANGED` warnings.
+3. **HTTP:** Railway gives the service a `*.up.railway.app` domain on the
+   injected `PORT`. Paste URLs use it automatically (https).
+4. **SSH:** enable **TCP Proxy** on port **2222**. Railway returns a host like
+   `roundhouse.proxy.rlwy.net:23456`. Connect with:
+   ```sh
+   ssh -t -p 23456 you@roundhouse.proxy.rlwy.net
+   ```
+   (Optional nicer hostname: CNAME e.g. `chat.example.com` → the proxy host;
+   the port still goes on the command line. Railway's TCP proxy can't put SSH
+   on bare port 22 of your own domain — use a VPS/Fly for that.)
+5. **Keep replicas = 1.** Chat rooms are in-memory; multiple replicas split
+   state. (Pastes persist on the volume; chat does not survive restarts.)
+
+-------------------------------------------------------------------------------
+
 ## Architecture
 
 ```
