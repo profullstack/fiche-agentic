@@ -1,8 +1,10 @@
-# ignore binaries
+# binaries
 /fiche
+/fiche-agentic
 
-# ignore default outpit dir
+# runtime data: pastes + generated ssh host key
+/data/
 code/
 
-# ignore log files
+# logs
 *.log

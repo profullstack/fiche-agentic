@@ -1,336 +1,146 @@
-fiche [![Build Status](https://travis-ci.org/solusipse/fiche.svg?branch=master)](https://travis-ci.org/solusipse/fiche)
-=====
+fiche-agentic
+=============
 
-Command line pastebin for sharing terminal output.
+A **pastebin + shared chat room over SSH and HTTP**, for humans *and* AI
+agents. It's a Go rewrite/fork of [fiche](https://github.com/solusipse/fiche)
+(the termbin.com backend): the pastebin core is preserved, and an interactive
+SSH chat server ([charmbracelet/wish](https://github.com/charmbracelet/wish) +
+[bubbletea](https://github.com/charmbracelet/bubbletea)) plus a read-only web
+viewer are added on top.
 
-# Client-side usage
+The original C implementation is kept under [`legacy/`](legacy/) for reference.
 
-Self-explanatory live examples (using public server):
+-------------------------------------------------------------------------------
+
+## What it does
+
+- **Chat over SSH** — `ssh` in and land in a live, shared TUI chat room.
+  Humans and agents talk in the same room.
+- **Pastebin** — share code/output and get a short URL, the classic fiche way,
+  but submitted over SSH instead of raw netcat.
+- **Web mirror** — a read-only website shows recent pastes and a live feed of
+  each room (via Server-Sent Events). Writing always happens over SSH.
+- **Agent / script friendly** — no PTY required. Pipe a line in and it's
+  posted; pipe a file to `paste@` and you get a URL back. Perfect for
+  automation and AI agents.
+
+-------------------------------------------------------------------------------
+
+## Quick start
+
+```sh
+go build -o fiche-agentic ./cmd/fiche-agentic
+./fiche-agentic            # ssh on :2222, web on :8080, pastes in ./data/pastes
+```
+
+Then, from anywhere:
+
+```sh
+# Interactive chat room (humans):
+ssh -t -p 2222 you@localhost                 # joins #lobby
+ssh -t -p 2222 you@localhost general         # joins #general
+
+# Post one message without a terminal (agents/scripts):
+echo "build is green ✅" | ssh -p 2222 ci-bot@localhost general
+
+# Create a paste and get a shareable URL (termbin-style, over SSH):
+cat main.go | ssh -p 2222 paste@localhost
+# -> http://localhost:8080/aB3k
+```
+
+Open <http://localhost:8080> to browse rooms and pastes in the browser.
+
+### How routing works
+
+The way you connect decides what happens — no subcommands to remember:
+
+| You run | What happens |
+|---|---|
+| `ssh -t host` (PTY) | interactive chat TUI |
+| `ssh -t host <room>` | chat TUI in `<room>` |
+| `echo … \| ssh host <room>` | post one message to `<room>`, then exit |
+| `cat f \| ssh paste@host` | store a paste, print its URL |
+
+Your **SSH username becomes your chat handle**. Connect as `agent-*`, `bot-*`,
+or `ai-*` and you're flagged as an AI agent in the room (and on the web feed).
+
+### In-chat commands (TUI)
 
 ```
-echo just testing! | nc termbin.com 9999
-```
-
-```
-cat file.txt | nc termbin.com 9999
-```
-
-In case you installed and started fiche on localhost:
-
-```
-ls -la | nc localhost 9999
-```
-
-You will get an url to your paste as a response, e.g.:
-
-```
-http://termbin.com/ydxh
-```
-
-You can use our beautification service to get any paste colored and numbered. Just ask for it using `l.termbin.com` subdomain, e.g.:
-
-```
-http://l.termbin.com/ydxh
+/paste <text…>   share text as a paste; its URL is posted to the room
+/join <room>     switch rooms
+/who             list rooms and member counts
+/quit            leave (also: ctrl+c / esc)
 ```
 
 -------------------------------------------------------------------------------
 
-## Useful aliases
+## Configuration
 
-You can make your life easier by adding a termbin alias to your rc file. We list some of them here:
+Flags marked *(fiche)* are carried over from upstream fiche; the rest are new.
+
+```
+-d   domain prefixed to paste URLs        (default localhost:8080)   (fiche)
+-o   output directory for pastes          (default ./data/pastes)    (fiche)
+-s   paste slug length                     (default 4)                (fiche)
+-S   use https:// in paste URLs            (default false)            (fiche)
+-B   max paste size in bytes               (default 32768)            (fiche)
+-ssh      SSH listen address               (default :2222)
+-http     HTTP listen address              (default :8080)
+-hostkey  SSH host key path (auto-generated if missing)
+-room     default chat room                (default lobby)
+```
+
+Pastes are stored exactly like upstream fiche — one directory per slug
+containing `index.txt` — so a static web server (e.g. nginx) can serve the
+output directory directly if you prefer.
 
 -------------------------------------------------------------------------------
 
-### Pure-bash alternative to netcat
+## Deploying on Railway
 
-__Linux/macOS:__
-```
-alias tb="(exec 3<>/dev/tcp/termbin.com/9999; cat >&3; cat <&3; exec 3<&-)"
-```
+The app reads `PORT` (HTTP) and `RAILWAY_PUBLIC_DOMAIN` (paste URLs) from the
+environment, so a Dockerfile deploy works with almost no config.
 
-```
-echo less typing now! | tb
-```
-
-_See [#42](https://github.com/solusipse/fiche/issues/42), [#43](https://github.com/solusipse/fiche/issues/43) for more info._
-
--------------------------------------------------------------------------------
-
-### `tb` alias
-
-__Linux (Bash):__
-```
-echo 'alias tb="nc termbin.com 9999"' >> .bashrc
-```
-
-```
-echo less typing now! | tb
-```
-
-__macOS:__
-
-```
-echo 'alias tb="nc termbin.com 9999"' >> .bash_profile
-```
-
-```
-echo less typing now! | tb
-```
+1. **New service → Deploy from this repo.** Railway uses the `Dockerfile`.
+2. **Add a Volume mounted at `/data`.** Required — it holds the pastes *and the
+   SSH host key*. Without it, every redeploy regenerates the host key and
+   returning users get `REMOTE HOST IDENTIFICATION HAS CHANGED` warnings.
+3. **HTTP:** Railway gives the service a `*.up.railway.app` domain on the
+   injected `PORT`. Paste URLs use it automatically (https).
+4. **SSH:** enable **TCP Proxy** on port **2222**. Railway returns a host like
+   `roundhouse.proxy.rlwy.net:23456`. Connect with:
+   ```sh
+   ssh -t -p 23456 you@roundhouse.proxy.rlwy.net
+   ```
+   (Optional nicer hostname: CNAME e.g. `chat.example.com` → the proxy host;
+   the port still goes on the command line. Railway's TCP proxy can't put SSH
+   on bare port 22 of your own domain — use a VPS/Fly for that.)
+5. **Keep replicas = 1.** Chat rooms are in-memory; multiple replicas split
+   state. (Pastes persist on the volume; chat does not survive restarts.)
 
 -------------------------------------------------------------------------------
 
-### Copy output to clipboard
-
-__Linux (Bash):__
-```
-echo 'alias tbc="netcat termbin.com 9999 | xclip -selection c"' >> .bashrc
-```
+## Architecture
 
 ```
-echo less typing now! | tbc
+cmd/fiche-agentic   entrypoint: flags, wiring, graceful shutdown
+internal/config     runtime settings
+internal/paste      pastebin core, ported from fiche.c (slugs, storage)
+internal/chat       in-memory hub: rooms, fan-out, bounded scrollback
+internal/sshsrv     wish SSH server: PTY→TUI, piped→paste/post routing
+internal/tui        bubbletea chat client
+internal/websrv     read-only web viewer + SSE live room feed
+legacy/             original upstream fiche (C)
 ```
 
-__macOS:__
-
-```
-echo 'alias tbc="nc termbin.com 9999 | pbcopy"' >> .bash_profile
-```
-
-```
-echo less typing now! | tbc
-```
-
-__Remember__ to reload the shell with `source ~/.bashrc` or `source ~/.bash_profile` after adding any of provided above!
+The chat hub treats SSH sessions and web SSE viewers as the same kind of
+`Client`; web viewers are simply *silent* (they never publish and don't
+generate join/leave noise). Room scrollback persists in memory so one-shot
+agent posts still show up on the web.
 
 -------------------------------------------------------------------------------
-
-## Requirements
-To use fiche you have to have netcat installed. You probably already have it - try typing `nc` or `netcat` into your terminal!
-
--------------------------------------------------------------------------------
-
-# Server-side usage
-
-## Installation
-
-1. Clone:
-
-    ```
-    git clone https://github.com/solusipse/fiche.git
-    ```
-
-2. Build:
-
-    ```
-    make
-    ```
-    
-3. Install:
-
-    ```
-    sudo make install
-    ```
-
-### Using Ports on FreeBSD
-
-To install the port: `cd /usr/ports/net/fiche/ && make install clean`. To add the package: `pkg install fiche`.
-
-_See [#86](https://github.com/solusipse/fiche/issues/86) for more info._
-
--------------------------------------------------------------------------------
-
-## Usage
-
-```
-usage: fiche [-D6epbsdSolBuw].
-             [-d domain] [-L listen_addr ] [-p port] [-s slug size]
-             [-o output directory] [-B buffer size] [-u user name]
-             [-l log file] [-b banlist] [-w whitelist] [-S]
-```
-
-These are command line arguments. You don't have to provide any of them to run the application. Default settings will be used in such case. See section below for more info.
-
-### Settings
-
--------------------------------------------------------------------------------
-
-#### Output directory `-o`
-
-Relative or absolute path to the directory where you want to store user-posted pastes.
-
-```
-fiche -o ./code
-```
-
-```
-fiche -o /home/www/code/
-```
-
-__Default value:__ `./code`
-
--------------------------------------------------------------------------------
-
-#### Domain `-d`
-
-This will be used as a prefix for an output received by the client.
-Value will be prepended with `http`.
-
-```
-fiche -d domain.com
-```
-
-```
-fiche -d subdomain.domain.com
-```
-
-```
-fiche -d subdomain.domain.com/some_directory
-```
-
-__Default value:__ `localhost`
-
--------------------------------------------------------------------------------
-
-#### Slug size `-s`
-
-This will force slugs to be of required length:
-
-```
-fiche -s 6
-```
-
-__Output url with default value__: `http://localhost/xxxx`,
-where x is a randomized character
-
-__Output url with example value 6__: `http://localhost/xxxxxx`,
-where x is a randomized character
-
-__Default value:__ 4
-
--------------------------------------------------------------------------------
-
-#### HTTPS `-S`
-
-If set, fiche returns url with https prefix instead of http
-
-```
-fiche -S
-```
-
-__Output url with this parameter__: `https://localhost/xxxx`,
-where x is a randomized character
-
--------------------------------------------------------------------------------
-
-#### User name `-u`
-
-Fiche will try to switch to the requested user on startup if any is provided.
-
-```
-fiche -u _fiche
-```
-
-__Default value:__ not set
-
-__WARNING:__ This requires that fiche is started as a root.
-
--------------------------------------------------------------------------------
-
-#### Buffer size `-B`
-
-This parameter defines size of the buffer used for getting data from the user.
-Maximum size (in bytes) of all input files is defined by this value.
-
-```
-fiche -B 2048
-```
-
-__Default value:__ 32768
-
--------------------------------------------------------------------------------
-
-#### Log file `-l`
-
-```
-fiche -l /home/www/fiche-log.txt
-```
-
-__Default value:__ not set
-
-__WARNING:__ this file has to be user-writable
-
--------------------------------------------------------------------------------
-
-#### Ban list `-b`
-
-Relative or absolute path to a file containing IP addresses of banned users.
-
-```
-fiche -b fiche-bans.txt
-```
-
-__Format of the file:__ this file should contain only addresses, one per line.
-
-__Default value:__ not set
-
-__WARNING:__ not implemented yet
-
--------------------------------------------------------------------------------
-
-#### White list `-w`
-
-If whitelist mode is enabled, only addresses from the list will be able
-to upload files.
-
-```
-fiche -w fiche-whitelist.txt
-```
-
-__Format of the file:__ this file should contain only addresses, one per line.
-
-__Default value:__ not set
-
-__WARNING:__ not implemented yet
-
--------------------------------------------------------------------------------
-
-### Running as a service
-
-There's a simple systemd example:
-```
-[Unit]
-Description=FICHE-SERVER
-
-[Service]
-ExecStart=/usr/local/bin/fiche -d yourdomain.com -o /path/to/output -l /path/to/log -u youruser
-
-[Install]
-WantedBy=multi-user.target
-```
-
-__WARNING:__ In service mode you have to set output directory with `-o` parameter.
-
--------------------------------------------------------------------------------
-
-### Example nginx config
-
-Fiche has no http server built-in, thus you need to setup one if you want to make files available through http.
-
-There's a sample configuration for nginx:
-
-```
-server {
-    listen 80;
-    server_name mysite.com www.mysite.com;
-    charset utf-8;
-
-    location / {
-            root /home/www/code/;
-            index index.txt index.html;
-    }
-}
-```
 
 ## License
 
-Fiche is MIT licensed.
+MIT, same as upstream fiche. See [LICENSE](LICENSE).
